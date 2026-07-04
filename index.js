@@ -9,13 +9,14 @@ app.use(express.json());
 
 const port = process.env.PORT || 8080;
 const uri = process.env.MONGODB_URI || 'mongodb+srv://shopeverse:TgYb3ZH3kSb00dc9@cluster0.deppkoh.mongodb.net/?appName=Cluster0';
-const dbName = process.env.DB_NAME || 'shopeverse';
 
 let client;
-let db;
+let productsCollection;
+let usersCollection;
+let ordersCollection;
 
-async function connectToMongo() {
-  if (db) return db;
+async function connectDB() {
+  if (client) return client;
 
   try {
     client = new MongoClient(uri, {
@@ -23,18 +24,25 @@ async function connectToMongo() {
     });
 
     await client.connect();
-    db = client.db(dbName);
-    console.log(`Connected to MongoDB database: ${dbName}`);
-    return db;
+
+    const db = client.db('shopverse');
+    productsCollection = db.collection('allProdect');
+    usersCollection = db.collection('users');
+    ordersCollection = db.collection('orders');
+
+    console.log('MongoDB Connected');
+    return client;
   } catch (error) {
     console.error('MongoDB connection failed:', error.message);
     throw error;
   }
 }
 
-async function getCollection(name) {
-  const database = await connectToMongo();
-  return database.collection(name);
+async function getProductsCollection() {
+  if (!productsCollection) {
+    await connectDB();
+  }
+  return productsCollection;
 }
 
 function sendError(res, status, message) {
@@ -42,46 +50,46 @@ function sendError(res, status, message) {
 }
 
 app.get('/', (req, res) => {
-  res.json({ message: 'Shopeverse API is running' });
+  res.json({ message: 'Server Running' });
 });
 
-app.get('/api/health', async (req, res) => {
+app.get('/products', async (req, res) => {
   try {
-    await connectToMongo();
-    res.json({ success: true, message: 'MongoDB connected', database: dbName });
+    const collection = await getProductsCollection();
+    const result = await collection.find({}).toArray();
+    res.send(result)
   } catch (error) {
-    sendError(res, 503, 'MongoDB connection failed');
+    sendError(res, 500, error.message);
   }
 });
 
 app.get('/api/products', async (req, res) => {
   try {
-    const collection = await getCollection('products');
-    const products = await collection.find({}).toArray();
-    res.json({ success: true, data: products });
+    const collection = await getProductsCollection();
+    const result = await collection.find({}).toArray();
+    res.json({ success: true, data: result });
   } catch (error) {
     sendError(res, 500, error.message);
   }
 });
 
-app.get('/api/products/:id', async (req, res) => {
+app.get('/products/:id', async (req, res) => {
   try {
-    const { id } = req.params;
-    if (!ObjectId.isValid(id)) return sendError(res, 400, 'Invalid product id');
+    const collection = await getProductsCollection();
+    const result = await collection.findOne({
+      _id: new ObjectId(req.params.id),
+    });
 
-    const collection = await getCollection('products');
-    const product = await collection.findOne({ _id: new ObjectId(id) });
-
-    if (!product) return sendError(res, 404, 'Product not found');
-    res.json({ success: true, data: product });
+    if (!result) return sendError(res, 404, 'Product not found');
+    res.json({ success: true, data: result });
   } catch (error) {
     sendError(res, 500, error.message);
   }
 });
 
-app.post('/api/products', async (req, res) => {
+app.post('/products', async (req, res) => {
   try {
-    const collection = await getCollection('products');
+    const collection = await getProductsCollection();
     const result = await collection.insertOne(req.body);
     res.status(201).json({ success: true, data: { _id: result.insertedId, ...req.body } });
   } catch (error) {
@@ -89,14 +97,11 @@ app.post('/api/products', async (req, res) => {
   }
 });
 
-app.put('/api/products/:id', async (req, res) => {
+app.put('/products/:id', async (req, res) => {
   try {
-    const { id } = req.params;
-    if (!ObjectId.isValid(id)) return sendError(res, 400, 'Invalid product id');
-
-    const collection = await getCollection('products');
+    const collection = await getProductsCollection();
     const result = await collection.updateOne(
-      { _id: new ObjectId(id) },
+      { _id: new ObjectId(req.params.id) },
       { $set: req.body }
     );
 
@@ -107,13 +112,12 @@ app.put('/api/products/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/products/:id', async (req, res) => {
+app.delete('/products/:id', async (req, res) => {
   try {
-    const { id } = req.params;
-    if (!ObjectId.isValid(id)) return sendError(res, 400, 'Invalid product id');
-
-    const collection = await getCollection('products');
-    const result = await collection.deleteOne({ _id: new ObjectId(id) });
+    const collection = await getProductsCollection();
+    const result = await collection.deleteOne({
+      _id: new ObjectId(req.params.id),
+    });
 
     if (result.deletedCount === 0) return sendError(res, 404, 'Product not found');
     res.json({ success: true, message: 'Product deleted' });
@@ -122,82 +126,13 @@ app.delete('/api/products/:id', async (req, res) => {
   }
 });
 
-app.get('/api/users', async (req, res) => {
-  try {
-    const collection = await getCollection('users');
-    const users = await collection.find({}).toArray();
-    res.json({ success: true, data: users });
-  } catch (error) {
-    sendError(res, 500, error.message);
-  }
-});
-
-app.post('/api/users', async (req, res) => {
-  try {
-    const collection = await getCollection('users');
-    const result = await collection.insertOne(req.body);
-    res.status(201).json({ success: true, data: { _id: result.insertedId, ...req.body } });
-  } catch (error) {
-    sendError(res, 500, error.message);
-  }
-});
-
-app.get('/api/users/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    if (!ObjectId.isValid(id)) return sendError(res, 400, 'Invalid user id');
-
-    const collection = await getCollection('users');
-    const user = await collection.findOne({ _id: new ObjectId(id) });
-
-    if (!user) return sendError(res, 404, 'User not found');
-    res.json({ success: true, data: user });
-  } catch (error) {
-    sendError(res, 500, error.message);
-  }
-});
-
-app.put('/api/users/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    if (!ObjectId.isValid(id)) return sendError(res, 400, 'Invalid user id');
-
-    const collection = await getCollection('users');
-    const result = await collection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: req.body }
-    );
-
-    if (result.matchedCount === 0) return sendError(res, 404, 'User not found');
-    res.json({ success: true, message: 'User updated' });
-  } catch (error) {
-    sendError(res, 500, error.message);
-  }
-});
-
-app.delete('/api/users/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    if (!ObjectId.isValid(id)) return sendError(res, 400, 'Invalid user id');
-
-    const collection = await getCollection('users');
-    const result = await collection.deleteOne({ _id: new ObjectId(id) });
-
-    if (result.deletedCount === 0) return sendError(res, 404, 'User not found');
-    res.json({ success: true, message: 'User deleted' });
-  } catch (error) {
-    sendError(res, 500, error.message);
-  }
-});
-
-app.use((req, res) => {
-  sendError(res, 404, 'Route not found');
-});
-
-connectToMongo().catch(() => {
-  console.log('Server is running, but MongoDB connection is unavailable.');
-});
-
-app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
-});
+connectDB()
+  .then(() => {
+    app.listen(port, () => {
+      console.log(`Server Running On Port ${port}`);
+    });
+  })
+  .catch((error) => {
+    console.error('Unable to start server:', error.message);
+    process.exit(1);
+  });
